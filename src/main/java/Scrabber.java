@@ -1,20 +1,21 @@
+import groovy.util.logging.Slf4j;
 import io.restassured.RestAssured;
 import io.restassured.response.Response;
 import me.xdrop.fuzzywuzzy.FuzzySearch;
 import net.lingala.zip4j.core.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
+import org.slf4j.Logger;
 
 import java.io.*;
+import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
+
+@Slf4j
 public class Scrabber {
-
-
 
     //Define the search Patterns for each page
     private static final Pattern firstPagePattern = Pattern.compile(
@@ -29,8 +30,7 @@ public class Scrabber {
             "/subtitles/arabic-text/+(.+?)"+"\"",
             Pattern.CASE_INSENSITIVE | Pattern.MULTILINE | Pattern.DOTALL);
 
-
-
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(Scrabber.class);
 
 
     public static void main(String[] args) throws IOException {
@@ -38,19 +38,19 @@ public class Scrabber {
         //Define the List that are used to store links
         List<String> listOfMoviesMatchesSearchLinks = new ArrayList<String>();
         List<String> listOfArabicTranslationLinks = new ArrayList<String>();
-        List<String> downloadLinks = new ArrayList<String>();
+        List<String> downloadLinks ;
 
-        Response response;
+        String movieName = args[0];
+        String subsFolder = args[1];
 
-    String movieName = "Ghostbusters.Afterlife.2021.1080p.WEBRip.x264-RARBG";
 
-        listOfMoviesMatchesSearchLinks = searchForMovieAndReturnListOfAvailableCandidates(listOfMoviesMatchesSearchLinks,movieName);
+      searchForMovieAndReturnListOfAvailableCandidates(listOfMoviesMatchesSearchLinks,movieName);
 
         //Do a fuzzy search to find the best candidate movie
         int movieIndexInList = FuzzySearch.extractOne(movieName, listOfMoviesMatchesSearchLinks).getIndex();
 
 
-        listOfArabicTranslationLinks = returnListOfArabicTranslations(listOfArabicTranslationLinks, "http://www.subscene.com/subtitles/" + listOfMoviesMatchesSearchLinks.get(movieIndexInList), secondPagePattern);
+        returnListOfArabicTranslations(listOfArabicTranslationLinks, "http://www.subscene.com/subtitles/" + listOfMoviesMatchesSearchLinks.get(movieIndexInList), secondPagePattern);
 
 
         for (int i = 0 ;i<listOfArabicTranslationLinks.size();i++) {
@@ -58,13 +58,13 @@ public class Scrabber {
             //visit final page to get download link
            downloadLinks = returnTheDownloadLink( downloadPagePattern,listOfMoviesMatchesSearchLinks.get(movieIndexInList), listOfArabicTranslationLinks.get(i));
 
-            downloadTheFile(downloadLinks);
+            downloadTheFile(downloadLinks,subsFolder);
 
-            unZipTheTranslationFile(downloadLinks, "src/main/resources/", "src/main/resources/");
+            unZipTheTranslationFile(downloadLinks, subsFolder, subsFolder);
         }
     }
 
-    private static void downloadTheFile(List<String> downloadLinks) throws IOException {
+    private static void downloadTheFile(List<String> downloadLinks, String subsFolder) throws IOException {
         //Download File
         String downLoadLinkFinal="https://subscene.com/subtitles/arabic-text/"+ downloadLinks.get(0);
         byte[] zipFile  = RestAssured.given()
@@ -72,14 +72,26 @@ public class Scrabber {
                 .andReturn().asByteArray();
 
         //Build the file
+        OutputStream outStream = null;
 
 
-        File outputImageFile = new File("src/main/resources",
-                downloadLinks.get(0)+".zip"  );
+        try {
+            File outputImageFile = new File(subsFolder, downloadLinks.get(0)+".zip"  );
+             outStream = new FileOutputStream(outputImageFile);
 
-        OutputStream outStream = new FileOutputStream(outputImageFile);
-        outStream.write(zipFile);
-        outStream.close();
+            outStream.write(zipFile);
+
+            outStream.close();
+            String filePath = subsFolder + downloadLinks.get(0)+".zip";
+            log.info("The following file was written in : {}" ,filePath );
+        }catch (Exception e){
+
+            log.error(e.getMessage());
+        }
+        finally {
+            //will enhance this later
+        }
+
     }
 
     private static List<String> returnListOfArabicTranslations(List<String> listOfArabicTranslationLinks, String s, Pattern secondPagePattern) {
@@ -125,7 +137,6 @@ public class Scrabber {
                 .queryParam("query",movieName)
                 .post("https://subscene.com/subtitles/searchbytitle")
                 .andReturn();
-        // System.out.println(response.asString());
         Matcher firstPageMatcher = firstPagePattern.matcher(response.asString());
 
         while (firstPageMatcher.find()) {
@@ -140,18 +151,24 @@ public class Scrabber {
         return listOfMoviesMatchesSearchLinks;
     }
 
-    private static void unZipTheTranslationFile(List<String> downloadLinks, String source,String destination ) {
+    private static void unZipTheTranslationFile(List<String> downloadLinks, String source,String destination ) throws NoSuchFileException, DirectoryNotEmptyException, IOException{
         //extract the file
 
         String finalZipFileURI = source+ downloadLinks.get(0)+".zip";
+        Path path = Paths.get(finalZipFileURI);
+
         try {
             ZipFile finalZipFile = new ZipFile(finalZipFileURI);
-            File f= new File(finalZipFileURI);
             finalZipFile.extractAll(destination);
-            f.delete();
+
+
+            Files.delete(path);
 
         } catch (ZipException e) {
             e.printStackTrace();
+        }
+        finally {
+            log.info("All Zip files are extracted to Subtitle files and deleted" );
         }
     }
 
